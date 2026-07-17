@@ -1,0 +1,11 @@
+# Ignore node_modules for any nested tools
+node_modules/
+.next/
+
+# NEVER commit the generated database files to git!!
+repo-embeddings.json
+repo-index.json
+
+# Environment variables
+.env*
+.env.local
