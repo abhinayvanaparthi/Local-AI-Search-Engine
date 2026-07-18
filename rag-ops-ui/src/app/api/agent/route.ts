@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-
+import fs from 'fs';
+import path from 'path';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -34,13 +35,24 @@ export async function POST(req: Request) {
           let messages = [
             {
               role: "system",
-              content: "You are an autonomous AI coding agent. You have access to a tool called `search_codebase` which performs a Hybrid Search (Semantic + Keyword) over the user's entire local codebase. You must use this tool to search for files, functions, or UI components before answering questions. If the tool returns TypeScript definitions (like interfaces or types), you should probably use the tool again to search for the actual 'implementation' or 'endpoint' of those types to get the real logic. Once you have read enough code, formulate a final answer."
-            },
-            {
-              role: "user",
-              content: query
+              content: "You are an autonomous AI coding agent. You have access to a tool called `search_codebase` which performs a Hybrid Search (Semantic + Keyword) over the user's entire local codebase. If the search tool returns a small chunk of a file but you need to see the entire file to understand the architecture or context, you can use the `read_entire_file` tool to load the full source code. Once you have read enough code, formulate a final answer."
             }
           ];
+
+          if (body.history && Array.isArray(body.history)) {
+             for (const msg of body.history) {
+                // Strip out the spinning status messages so LLM just sees text
+                const cleanContent = msg.content.replace(/> 🔄 \*.*?\*\n\n/g, '').trim();
+                if (cleanContent) {
+                   messages.push({ role: msg.role, content: cleanContent });
+                }
+             }
+          }
+
+          messages.push({
+             role: "user",
+             content: query
+          });
 
           const tools = [
             {
@@ -59,12 +71,30 @@ export async function POST(req: Request) {
                   required: ["search_query"]
                 }
               }
+            },
+            {
+              type: "function",
+              function: {
+                name: "read_entire_file",
+                description: "Read the entire contents of a specific file by its absolute path.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    file_path: {
+                      type: "string",
+                      description: "The absolute file path of the file to read, exactly as provided by the search_codebase tool (e.g. 'D:/LM-ADMIN/...')."
+                    }
+                  },
+                  required: ["file_path"]
+                }
+              }
             }
           ];
 
           let isDone = false;
           let iterations = 0;
-          const maxIterations = 3;
+          const maxIterations = 8;
+          let previousQueries = new Set<string>();
 
           while (!isDone && iterations < maxIterations) {
             iterations++;
@@ -130,8 +160,21 @@ export async function POST(req: Request) {
               for (const toolCall of toolCallsToExecute) {
                 if (toolCall.function.name === 'search_codebase') {
                   const args = toolCall.function.arguments;
-                  const sq = args.search_query;
+                  let sq = args.search_query;
+                  if (typeof sq === 'object') {
+                     sq = JSON.stringify(sq);
+                  }
                   
+                  if (previousQueries.has(sq)) {
+                     console.log(`\nLoop Breaker Triggered! Model tried to search for "${sq}" again.`);
+                     messages.push({
+                        role: "tool",
+                        content: `You already searched for "${sq}". You must stop searching and formulate a final answer based on the context you already have.`
+                     });
+                     continue;
+                  }
+                  previousQueries.add(sq);
+
                   sendStatus(`Running Hybrid Search for: "${sq}"...`);
                   
                   // Call our context API
@@ -156,6 +199,47 @@ export async function POST(req: Request) {
                   
                   console.log(`\nSearch Tool Completed. Extracted ${contextData.matches.length} chunks and appended them to the Agent's context.`);
                   sendStatus(`Found ${contextData.matches.length} matching files. Reading the code...`);
+                } else if (toolCall.function.name === 'read_entire_file') {
+                  const args = toolCall.function.arguments;
+                  const filePath = args.file_path;
+                  
+                  if (previousQueries.has("read:" + filePath)) {
+                     messages.push({
+                        role: "tool",
+                        content: `You already tried to read ${filePath}. Please formulate your answer based on what you have.`
+                     });
+                     continue;
+                  }
+                  previousQueries.add("read:" + filePath);
+
+                  sendStatus(`Reading entire file: ${filePath.split(/[\/\\]/).pop()}...`);
+                  
+                  try {
+                     let resolvedPath = filePath;
+                     // If it's a relative path from the LM-ADMIN repo, resolve it.
+                     if (!fs.existsSync(resolvedPath)) {
+                        resolvedPath = path.join("D:/LM-ADMIN/lm-admin", filePath);
+                     }
+
+                     if (fs.existsSync(resolvedPath)) {
+                        const fileContent = fs.readFileSync(resolvedPath, 'utf8');
+                        messages.push({
+                           role: "tool",
+                           content: `=== FILE START (${resolvedPath}) ===\n${fileContent}\n=== FILE END ===`
+                        });
+                        console.log(`\nRead entire file: ${resolvedPath} (${fileContent.length} chars)`);
+                     } else {
+                        messages.push({
+                           role: "tool",
+                           content: `ERROR: File not found at path: ${resolvedPath}`
+                        });
+                     }
+                  } catch (err: any) {
+                     messages.push({
+                        role: "tool",
+                        content: `ERROR: Failed to read file. ${err.message}`
+                     });
+                  }
                 }
               }
             } else {

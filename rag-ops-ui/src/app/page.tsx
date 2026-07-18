@@ -86,7 +86,7 @@ export default function RAGDashboard() {
         const agentRes = await fetch("/api/agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: userQuery, llmModel: selectedLLM, embeddingModel: selectedEmbedModel, topN })
+          body: JSON.stringify({ query: userQuery, history: messages, llmModel: selectedLLM, embeddingModel: selectedEmbedModel, topN })
         });
         
         if (!agentRes.ok) throw new Error("Failed to connect to Agent API");
@@ -204,7 +204,7 @@ export default function RAGDashboard() {
         <div className="p-4 border-b border-slate-200 flex flex-wrap gap-4 bg-slate-50 items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-lg text-indigo-700">
             <Bot className="w-6 h-6" />
-            LM-Admin RAG Ops
+            RepoMind
           </div>
           
           <div className="flex items-center gap-4 text-sm">
