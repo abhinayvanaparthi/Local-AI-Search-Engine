@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 
     // 2. Load database (cached)
     if (cachedEmbeddings.length === 0) {
-      const dbPath = path.join(process.cwd(), '../../repo-embeddings.json');
+      const dbPath = path.join(process.cwd(), '../repo-embeddings.json');
       if (!fs.existsSync(dbPath)) {
         return NextResponse.json({ error: 'repo-embeddings.json not found. Run EmbedAgent first.' }, { status: 404 });
       }

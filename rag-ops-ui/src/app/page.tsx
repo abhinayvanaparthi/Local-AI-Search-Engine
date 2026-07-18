@@ -15,6 +15,7 @@ export default function RAGDashboard() {
   const [selectedLLM, setSelectedLLM] = useState("qwen2.5:3b");
   const [topN, setTopN] = useState(5);
   const [contextOnly, setContextOnly] = useState(false);
+  const [isAgentMode, setIsAgentMode] = useState(true);
   
   const [query, setQuery] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -74,63 +75,112 @@ export default function RAGDashboard() {
     setRawContext("");
 
     try {
-      // Step 1: Get Context
-      const contextRes = await fetch("/api/context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: userQuery, topN, embeddingModel: selectedEmbedModel })
-      });
-
-      if (!contextRes.ok) throw new Error("Failed to retrieve context");
-      const contextData = await contextRes.json();
-      
-      setCurrentMatches(contextData.matches);
-      setCurrentMetrics(contextData.metrics);
-      setRawContext(contextData.rawContext);
-
-      if (contextOnly) {
-        setMessages(prev => [...prev, { 
-          role: "assistant", 
-          content: "Context Generated! You can view it in the right pane or copy it."
-        }]);
-        setIsProcessing(false);
-        return;
-      }
-
-      // Step 2: Generate LLM Response (Streaming)
-      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
-      
-      const genRes = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: userQuery, rawContext: contextData.rawContext, llmModel: selectedLLM })
-      });
-
-      if (!genRes.ok) throw new Error("Failed to generate response");
-      
-      const reader = genRes.body?.getReader();
-      const decoder = new TextDecoder();
-      
-      if (reader) {
-        let aiText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          // Ollama stream format parsing
-          const lines = chunk.split('\n').filter(l => l.trim() !== '');
-          for (const line of lines) {
-            try {
-              const parsed = JSON.parse(line);
-              if (parsed.response) {
-                aiText += parsed.response;
+      if (isAgentMode) {
+        // AGENT MODE (Autonomous Tool Calling)
+        setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+        
+        const agentRes = await fetch("/api/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: userQuery, llmModel: selectedLLM, embeddingModel: selectedEmbedModel, topN })
+        });
+        
+        if (!agentRes.ok) throw new Error("Failed to connect to Agent API");
+        
+        const reader = agentRes.body?.getReader();
+        const decoder = new TextDecoder();
+        
+        if (reader) {
+          let aiText = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n').filter(l => l.trim() !== '');
+            for (const line of lines) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.type === "status") {
+                  aiText += `> 🔄 *${parsed.message}*\n\n`;
+                } else if (parsed.type === "context") {
+                  setCurrentMatches(parsed.matches);
+                  setRawContext(parsed.rawContext);
+                  setCurrentMetrics({ charCount: parsed.rawContext.length, estimatedTokens: Math.ceil(parsed.rawContext.length / 4) });
+                } else if (parsed.type === "token") {
+                  aiText += parsed.content;
+                } else if (parsed.type === "error") {
+                  aiText += `\n\n**Error**: ${parsed.message}`;
+                }
+                
                 setMessages(prev => {
                   const newMsgs = [...prev];
                   newMsgs[newMsgs.length - 1].content = aiText;
                   return newMsgs;
                 });
-              }
-            } catch (e) { /* ignore parse error for incomplete chunks */ }
+              } catch (e) { /* ignore */ }
+            }
+          }
+        }
+
+      } else {
+        // STANDARD RAG MODE
+        // Step 1: Get Context
+        const contextRes = await fetch("/api/context", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: userQuery, topN, embeddingModel: selectedEmbedModel })
+        });
+
+        if (!contextRes.ok) throw new Error("Failed to retrieve context");
+        const contextData = await contextRes.json();
+        
+        setCurrentMatches(contextData.matches);
+        setCurrentMetrics(contextData.metrics);
+        setRawContext(contextData.rawContext);
+
+        if (contextOnly) {
+          setMessages(prev => [...prev, { 
+            role: "assistant", 
+            content: "Context Generated! You can view it in the right pane or copy it."
+          }]);
+          setIsProcessing(false);
+          return;
+        }
+
+        // Step 2: Generate LLM Response (Streaming)
+        setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+        
+        const genRes = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: userQuery, rawContext: contextData.rawContext, llmModel: selectedLLM })
+        });
+
+        if (!genRes.ok) throw new Error("Failed to generate response");
+        
+        const reader = genRes.body?.getReader();
+        const decoder = new TextDecoder();
+        
+        if (reader) {
+          let aiText = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n').filter(l => l.trim() !== '');
+            for (const line of lines) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.response) {
+                  aiText += parsed.response;
+                  setMessages(prev => {
+                    const newMsgs = [...prev];
+                    newMsgs[newMsgs.length - 1].content = aiText;
+                    return newMsgs;
+                  });
+                }
+              } catch (e) { /* ignore parse error for incomplete chunks */ }
+            }
           }
         }
       }
@@ -167,12 +217,23 @@ export default function RAGDashboard() {
              <div className="flex items-center gap-2">
                <input 
                  type="checkbox" 
+                 id="agentMode" 
+                 checked={isAgentMode} 
+                 onChange={e => setIsAgentMode(e.target.checked)} 
+                 className="rounded border-slate-300"
+               />
+               <label htmlFor="agentMode" className="font-semibold text-slate-600 cursor-pointer">Agent Mode (Auto-Search)</label>
+             </div>
+             <div className="flex items-center gap-2">
+               <input 
+                 type="checkbox" 
                  id="contextOnly" 
                  checked={contextOnly} 
                  onChange={e => setContextOnly(e.target.checked)} 
                  className="rounded border-slate-300"
+                 disabled={isAgentMode}
                />
-               <label htmlFor="contextOnly" className="font-semibold text-slate-600 cursor-pointer">Context Only</label>
+               <label htmlFor="contextOnly" className={`font-semibold cursor-pointer ${isAgentMode ? 'text-slate-400' : 'text-slate-600'}`}>Context Only</label>
              </div>
           </div>
         </div>
