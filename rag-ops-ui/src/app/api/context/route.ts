@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import Fuse from 'fuse.js';
 
 // Cache embeddings in memory to prevent reading 35MB file on every request
 let cachedEmbeddings: any[] = [];
 let cachedIndex: any[] = [];
+let cachedFuse: Fuse<any> | null = null;
 
 function getCosineSimilarity(vecA: number[], vecB: number[]): number {
   let dotProduct = 0;
@@ -19,26 +21,7 @@ function getCosineSimilarity(vecA: number[], vecB: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function calculateKeywordScore(query: string, text: string): number {
-  // Extract words longer than 2 characters
-  const queryTerms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
-  if (queryTerms.length === 0) return 0;
-  
-  const textLower = text.toLowerCase();
-  let score = 0;
-  
-  for (const term of queryTerms) {
-    let count = 0;
-    let idx = textLower.indexOf(term);
-    while (idx !== -1) {
-      count++;
-      idx = textLower.indexOf(term, idx + term.length);
-    }
-    // Cap at 5 matches per term to prevent spamming
-    score += Math.min(count, 5);
-  }
-  return score;
-}
+
 
 export async function POST(req: Request) {
   try {
@@ -78,16 +61,35 @@ export async function POST(req: Request) {
       const rawData = fs.readFileSync(dbPath, 'utf8');
       const db = JSON.parse(rawData);
       cachedEmbeddings = Array.isArray(db) ? db : (db.embeddings || []);
+      
+      cachedFuse = new Fuse(cachedEmbeddings, {
+         keys: ['symbol', 'text'],
+         includeScore: true,
+         threshold: 0.5, // 0.0 is exact match, 1.0 is anything
+         ignoreLocation: true
+      });
     }
 
-    // 3. Compute similarities (Hybrid Search: Vector + Keyword)
+    // 3. Compute similarities (Hybrid Search: Vector + Fuzzy Keyword)
+    let fuseScores = new Float32Array(cachedEmbeddings.length);
+    if (cachedFuse && query) {
+      const results = cachedFuse.search(query);
+      for (const res of results) {
+        // Fuse score: 0 is perfect match, 1 is mismatch
+        // We invert it so higher is better
+        const score = res.score !== undefined ? (1 - res.score) : 0;
+        fuseScores[res.refIndex] = score; 
+      }
+    }
+
     const scoredItems = [];
-    for (const item of cachedEmbeddings) {
+    for (let i = 0; i < cachedEmbeddings.length; i++) {
+      const item = cachedEmbeddings[i];
       let vectorScore = 0;
       if (item.embedding && item.embedding.length === queryEmbedding.length) {
         vectorScore = getCosineSimilarity(queryEmbedding, item.embedding);
       }
-      const keywordScore = calculateKeywordScore(query, item.text);
+      const keywordScore = fuseScores[i];
       scoredItems.push({ ...item, vectorScore, keywordScore });
     }
 
