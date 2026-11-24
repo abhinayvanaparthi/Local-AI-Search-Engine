@@ -8,10 +8,10 @@ An offline-first, local AI code search, dependency intelligence, and retrieval-a
 
 RepoMind is codebase-agnostic: configure `WORKSPACE_ROOT` to point to any local TypeScript or JavaScript repository (Next.js, React, Node.js) to scan, index, and analyze it.
 
-During development and benchmark testing, the platform was evaluated on an enterprise sports league management application (**LM-ADMIN** / CricClubs) comprising **1,154 files** (126 pages, 319 components, 49 API routes, 86 utilities/hooks).
+During development and benchmark testing, the platform was evaluated on a large-scale enterprise TypeScript/Next.js production application comprising over 1,000 files across pages, components, and API routes.
 
 **Privacy & Security Guarantees**:
-- **Zero Remote Leakage**: All generated index files (`repo-index.json`, ~13 MB) and vector embeddings (`repo-embeddings.json`, ~95 MB) remain strictly local and are excluded by `.gitignore`.
+- **Zero Remote Leakage**: All generated index files (`repo-index.json`) and vector databases (`repo-embeddings.json`) remain strictly local to your machine and are excluded by `.gitignore`.
 - **Path-Traversal Guard**: The agent's file-reading tool validates that resolved file paths strictly reside inside the configured `WORKSPACE_ROOT`, preventing arbitrary filesystem access.
 - **Offline Inference**: All embeddings and chat completions run over a local Ollama instance (`localhost:11434`).
 

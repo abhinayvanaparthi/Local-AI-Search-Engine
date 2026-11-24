@@ -207,10 +207,10 @@ export class SearchSkill {
     for (const file of Object.values(this.index.files)) {
       const p = file.path.toLowerCase();
       if (p.startsWith('app/') && p.includes('page.')) domains.Pages.push(file.path);
-      else if (p.startsWith('components/') || p.startsWith('public-portal-components/components/')) domains.Components.push(file.path);
+      else if (p.startsWith('components/')) domains.Components.push(file.path);
       else if (p.includes('route.') || p.startsWith('api/')) domains.API.push(file.path);
-      else if (p.startsWith('context/') || p.startsWith('store/') || p.startsWith('public-portal-components/context/')) domains.ContextState.push(file.path);
-      else if (p.startsWith('lib/') || p.startsWith('hooks/') || p.startsWith('utils/') || p.startsWith('public-portal-components/hooks/') || p.startsWith('public-portal-components/lib/')) domains.UtilsHooks.push(file.path);
+      else if (p.startsWith('context/') || p.startsWith('store/')) domains.ContextState.push(file.path);
+      else if (p.startsWith('lib/') || p.startsWith('hooks/') || p.startsWith('utils/')) domains.UtilsHooks.push(file.path);
       else domains.Other.push(file.path);
     }
 

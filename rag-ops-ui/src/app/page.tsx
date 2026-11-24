@@ -298,7 +298,7 @@ export default function RAGDashboard() {
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="e.g. How does the isCoachingBeyond flag conditionally render the Umpire Upload component?"
+              placeholder="e.g. How does the authentication provider conditionally render the navigation bar?"
               className="flex-1 px-4 py-3 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
               disabled={isProcessing}
             />
