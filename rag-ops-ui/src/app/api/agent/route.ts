@@ -82,7 +82,7 @@ export async function POST(req: Request) {
                   properties: {
                     file_path: {
                       type: "string",
-                      description: "The absolute file path of the file to read, exactly as provided by the search_codebase tool (e.g. 'D:/LM-ADMIN/...')."
+                      description: "The file path of the file to read, as provided by the search_codebase tool (e.g. 'src/app/page.tsx')."
                     }
                   },
                   required: ["file_path"]
@@ -215,10 +215,12 @@ export async function POST(req: Request) {
                   sendStatus(`Reading entire file: ${filePath.split(/[\/\\]/).pop()}...`);
                   
                   try {
-                     let resolvedPath = filePath;
-                     // If it's a relative path from the LM-ADMIN repo, resolve it.
-                     if (!fs.existsSync(resolvedPath)) {
-                        resolvedPath = path.join("D:/LM-ADMIN/lm-admin", filePath);
+                     const workspaceRoot = path.resolve(process.env.WORKSPACE_ROOT || process.cwd());
+                     const resolvedPath = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(workspaceRoot, filePath);
+
+                     // Security guard: Prevent path traversal outside the workspace root
+                     if (!resolvedPath.startsWith(workspaceRoot + path.sep) && resolvedPath !== workspaceRoot) {
+                        throw new Error(`Path outside workspace: "${filePath}"`);
                      }
 
                      if (fs.existsSync(resolvedPath)) {

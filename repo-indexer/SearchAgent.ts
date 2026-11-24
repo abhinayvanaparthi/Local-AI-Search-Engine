@@ -5,7 +5,7 @@ function printHelp() {
   console.log(`
 SearchAgent CLI - Query the Repo Index
 ======================================
-Usage: npm run search -- [options]
+Usage: npx tsx SearchAgent.ts [options]
 
 Options:
   --find <term>       Broad search for a symbol, component, or file path.
@@ -35,7 +35,7 @@ async function main() {
     return;
   }
 
-  const workspaceRoot = path.resolve(__dirname, '../../');
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../');
   const indexPath = path.join(workspaceRoot, 'repo-index.json');
   
   let searchSkill: SearchSkill;

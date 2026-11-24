@@ -16,7 +16,7 @@ async function main() {
 
   if (!query) {
     console.error("\x1b[31mError: Please provide a natural language query.\x1b[0m");
-    console.error("Usage: npx tsx tools/repo-indexer/ContextBuilderAgent.ts \"How do event cards work?\"");
+    console.error("Usage: npx tsx ContextBuilderAgent.ts \"How do event cards work?\"");
     process.exit(1);
   }
 

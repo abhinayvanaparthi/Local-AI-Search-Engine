@@ -101,7 +101,7 @@ export class RepoIndexAgent {
 }
 
 if (require.main === module) {
-  const workspaceRoot = path.resolve(__dirname, '../../');
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../');
   const agent = new RepoIndexAgent(workspaceRoot);
   agent.run().catch(console.error);
 }
