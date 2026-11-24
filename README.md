@@ -149,43 +149,47 @@ Local-AI-Search-Engine/
 
 ```mermaid
 flowchart TD
-    subgraph Offline_Indexing ["1. Offline Indexing Pipeline"]
-        SRC["Target Source Code (.ts/.tsx/.js/.jsx)"] --> Scanner["ScannerSkill\n(SHA-256 & mtime check)"]
-        Scanner --> Extractor["ExtractorSkill\n(ts-morph AST analysis)"]
-        Extractor --> Summarizer["SummarizerSkill\n(Optional Gemini 2.0 Flash)"]
-        Summarizer --> Storage["StorageSkill"]
-        Storage --> IndexJSON["repo-index.json"]
-        IndexJSON --> EmbedAgent["EmbedAgent\n(Symbol Chunker)"]
-        EmbedAgent --> OllamaEmbed["Ollama /api/embeddings\n(jina-embeddings-v2-base-code)"]
-        OllamaEmbed --> EmbedJSON["repo-embeddings.json"]
+    subgraph Indexing["1. Indexing & Embedding Pipeline"]
+        direction TB
+        SRC["Target Source Code<br/>(.ts, .tsx, .js, .jsx)"]
+        Scanner["ScannerSkill<br/>(SHA-256 & mtime check)"]
+        Extractor["ExtractorSkill<br/>(ts-morph AST analysis)"]
+        Summarizer["SummarizerSkill<br/>(Optional Gemini 2.0 Flash)"]
+        Storage["StorageSkill"]
+        IndexJSON[("repo-index.json")]
+        EmbedAgent["EmbedAgent<br/>(Symbol Chunker)"]
+        OllamaEmbed["Ollama /api/embeddings<br/>(jina-embeddings-v2-base-code)"]
+        EmbedJSON[("repo-embeddings.json")]
+
+        SRC --> Scanner
+        Scanner --> Extractor
+        Extractor --> Summarizer
+        Summarizer --> Storage
+        Storage --> IndexJSON
+        IndexJSON --> EmbedAgent
+        EmbedAgent --> OllamaEmbed
+        OllamaEmbed --> EmbedJSON
     end
 
-    subgraph Query_Serving ["2. Query & Serving Pipeline"]
-        UserQuery["User Natural Language Query"]
-        
-        subgraph Web_UI ["Next.js Web UI (rag-ops-ui)"]
-            Dashboard["RAGDashboard (page.tsx)"]
-            
-            subgraph API_Routes ["API Routes"]
-                StatusRoute["/api/status\n(Ollama /api/tags)"]
-                ContextRoute["/api/context\n(Hybrid: Vector 70% + Fuse.js 30%)"]
-                GenerateRoute["/api/generate\n(Direct LLM Stream)"]
-                AgentRoute["/api/agent\n(Autonomous Loop: search + read_file)"]
-            end
-        end
+    subgraph Serving["2. Query & Serving Pipeline"]
+        direction TB
+        UserQuery["User Query"]
+        Dashboard["Next.js Web Dashboard<br/>(rag-ops-ui)"]
+        SearchCLI["SearchAgent CLI<br/>(Impact, Circles, Routes)"]
+        ReplCLI["SemanticSearch CLI<br/>(Interactive REPL)"]
+        RagCLI["RagAgent CLI<br/>(Terminal RAG)"]
 
-        subgraph CLI_Tools ["CLI Tools (repo-indexer)"]
-            SearchCLI["SearchAgent.ts\n(--find, --who-uses, --impact, --find-circles)"]
-            ReplCLI["SemanticSearch.ts\n(Interactive Vector REPL)"]
-            RagCLI["RagAgent.ts\n(Terminal RAG)"]
-        end
-
-        EmbedJSON --> ContextRoute
-        EmbedJSON --> ReplCLI
-        EmbedJSON --> RagCLI
-        IndexJSON --> SearchCLI
-        IndexJSON --> AgentRoute
+        UserQuery --> Dashboard
+        UserQuery --> SearchCLI
+        UserQuery --> ReplCLI
+        UserQuery --> RagCLI
     end
+
+    EmbedJSON -.-> Dashboard
+    EmbedJSON -.-> ReplCLI
+    EmbedJSON -.-> RagCLI
+    IndexJSON -.-> SearchCLI
+    IndexJSON -.-> Dashboard
 ```
 
 ---
