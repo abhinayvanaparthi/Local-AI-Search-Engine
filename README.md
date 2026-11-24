@@ -1,19 +1,37 @@
 # Local AI Search Engine (RepoMind)
 
-An offline-first, local AI code search, dependency intelligence, and retrieval-augmented generation (RAG) platform. RepoMind indexes TypeScript and JavaScript codebases using Abstract Syntax Tree (AST) parsing via `ts-morph`, extracts code symbols and dependency relationships, computes vector embeddings locally via Ollama (`unclemusclez/jina-embeddings-v2-base-code` / `nomic-embed-text`), and exposes both an extensible command-line toolkit and an interactive Next.js web application (`rag-ops-ui`). It enables developers to perform local semantic code search, hybrid search (combining vector similarity and Fuse.js fuzzy keyword matching), blast-radius impact analysis, circular dependency detection, and autonomous agentic workflows using local LLMs (such as `qwen2.5:3b`) without leaking proprietary code to third-party cloud APIs.
+An AI-powered code search, dependency intelligence, and retrieval-augmented generation (RAG) platform designed for TypeScript and JavaScript codebases. RepoMind indexes repositories using Abstract Syntax Tree (AST) parsing via `ts-morph`, extracts code symbols and dependency relationships, computes vector embeddings locally via Ollama (`unclemusclez/jina-embeddings-v2-base-code`), and provides both an extensible command-line toolkit and an interactive Next.js web application (`rag-ops-ui`).
+
+Developers can perform hybrid code search (combining vector similarity with Fuse.js fuzzy keyword matching), blast-radius impact analysis, circular dependency detection, and autonomous agentic workflows using local models (such as `qwen2.5:3b`) or larger GPU-hosted models (such as `Qwen 2.5 Coder 14B` running on Google Colab via a tunnel).
 
 ---
 
-## Target Codebase & Data Privacy
+## Execution Modes, Privacy & Data Flow
+
+Chat, RAG queries, and autonomous agent workflows are powered exclusively via Ollama (either locally or through a Colab tunnel). **Gemini is not a chat provider in this platform**; it is solely used by an optional offline file summarizer during codebase indexing (which is disabled by default in the code).
+
+| Mode / Feature | Scope | What Stays on Machine | What Is Sent Off Machine | Privacy Level | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Local Ollama Mode (Chat & Embeddings)** | Chat & RAG | Entire source codebase, AST index (`repo-index.json`), vector database (`repo-embeddings.json`), embeddings computation, prompts, and completions | **Nothing** (0 bytes sent outside local machine) | **100% Private (Local-Only)** | All embeddings (`/api/embeddings`) and chat inferences (`/api/generate`, `/api/chat`) execute against a local Ollama instance (`http://localhost:11434`). No external network requests are made. |
+| **Colab-Hosted Model (via Tunnel)** | Chat & RAG | Source repository files, AST index, vector embeddings database | User prompt, retrieved code chunks (or full files read by agent tools), and model responses | **Shared with Cloud Host (Google Colab & Tunnel Provider)** | Chat and agent inference run on a remote Google Colab GPU instance over a public tunnel (e.g., ngrok or cloudflared). Code chunks in the active context window travel across third-party infrastructure. |
+| **Gemini API (Offline Indexing Only)** | Indexer Only *(Not Chat)* | Base AST index structure, vector embeddings | Source code file content sent for architectural summarization | **Cloud API (Google)** | **Not a chat mode.** Only used during `RepoIndexAgent` execution if `GEMINI_API_KEY` is provided and the summarizer is manually re-enabled (it is commented out by default in `RepoIndexAgent.ts` to conserve API quota). |
+
+> [!IMPORTANT]
+> - **Chat is Ollama-Only**: Chat responses and agent reasoning cannot be routed to the Gemini API. Chat inference is handled exclusively by Ollama (local or remote Colab tunnel).
+> - **Local Ollama Mode** guarantees zero remote code exposure: embedding generation and model inference remain strictly contained on `localhost`.
+> - **Colab Mode** sends code context over the internet: retrieved code chunks, prompts, or source files are processed by the remote Colab runtime and tunnel provider. Do not use remote modes if working with proprietary code under strict air-gapped security policies.
+
+---
+
+## Target Codebase & Benchmark Evaluation
 
 RepoMind is codebase-agnostic: configure `WORKSPACE_ROOT` to point to any local TypeScript or JavaScript repository (Next.js, React, Node.js) to scan, index, and analyze it.
 
 During development and benchmark testing, the platform was evaluated on a large-scale enterprise TypeScript/Next.js production application comprising over 1,000 files across pages, components, and API routes.
 
-**Privacy & Security Guarantees**:
-- **Zero Remote Leakage**: All generated index files (`repo-index.json`) and vector databases (`repo-embeddings.json`) remain strictly local to your machine and are excluded by `.gitignore`.
+**Core Guarantees**:
+- **Local Artifact Storage**: All generated index files (`repo-index.json`) and vector databases (`repo-embeddings.json`) reside in the project root and are excluded by `.gitignore`.
 - **Path-Traversal Guard**: The agent's file-reading tool validates that resolved file paths strictly reside inside the configured `WORKSPACE_ROOT`, preventing arbitrary filesystem access.
-- **Offline Inference**: All embeddings and chat completions run over a local Ollama instance (`localhost:11434`).
 
 ---
 
@@ -35,7 +53,7 @@ During development and benchmark testing, the platform was evaluated on a large-
 
 ### 2. Local Vector Embeddings & Storage
 - **Granular Symbol Chunking**: Slices files into dedicated chunks per symbol (component, hook, function, route, type) enriched with imports and call references (`repo-indexer/EmbedAgent.ts`).
-- **Local Ollama Embeddings**: Generates dense vector embeddings via local Ollama instances (`http://localhost:11434/api/embeddings`) using `unclemusclez/jina-embeddings-v2-base-code`.
+- **Local Ollama Embeddings**: Generates dense vector embeddings via a local Ollama instance (`http://localhost:11434/api/embeddings`) using `unclemusclez/jina-embeddings-v2-base-code`.
 - **Deduplication & Incremental Saves**: Reuses existing vector embeddings for unchanged code chunks and periodically flushes progress to disk (`repo-embeddings.json`).
 
 ### 3. Graph Analysis & Codebase CLI Queries
@@ -54,12 +72,20 @@ The `SearchSkill` and `SearchAgent` CLI offer graph intelligence directly over `
 - **Terminal RAG Agent**: Command-line RAG pipeline that feeds assembled context packages and strict system prompts into local Ollama models (`qwen2.5:3b` by default) with real-time response streaming (`repo-indexer/RagAgent.ts`).
 - **Telemetry Analyzer**: Parses JSONL conversation transcripts to output model reasoning steps, token usage estimates, and tool invocation counts (`repo-indexer/MetricsAnalyzer.ts`).
 
-### 5. Interactive Web Dashboard (`rag-ops-ui`)
+### 5. Autonomous Agent & Interactive Web Dashboard (`rag-ops-ui`)
 Built with Next.js 16, React 19, and Tailwind CSS v4:
 - **Real-Time Diagnostics**: Live status polling against Ollama (`/api/status`), displaying active server status and dynamically populating model selection menus.
 - **Dual Chat Modes**:
   - **Standard RAG Mode**: Hybrid search query -> context retrieval -> streaming LLM response (includes a **Context Only** toggle to inspect raw retrieved code without invoking an LLM).
-  - **Autonomous Agent Mode**: An agentic loop (`/api/agent`) executing multi-turn tool calling (`search_codebase` and `read_entire_file`) with built-in loop breakers and raw markdown JSON fallback parsing.
+  - **Autonomous Agent Mode (`/api/agent`)**: An agentic loop executing multi-turn tool calling with built-in loop breakers and markdown JSON fallback parsing.
+- **Agent Tools (`/api/agent`)**:
+  - `search_codebase`: Runs hybrid search (vector cosine similarity + Fuse.js fuzzy keyword matching) against `repo-embeddings.json` and injects relevant code chunks. Includes a loop breaker that halts repetitive identical queries.
+  - `read_entire_file`: Reads the complete raw file contents from the local disk when snippet chunks are insufficient, guarded against path traversal outside `WORKSPACE_ROOT`.
+- **UI Reasoning Streaming**: Streams Server-Sent Events (SSE) emitting:
+  - `status`: Real-time agent thought/action steps (e.g. `Running Hybrid Search for...`, `Reading entire file...`, `Formulating final answer...`), displayed as animated status updates in the chat window.
+  - `context`: Dispatches retrieved file matches and estimated token metrics to the Context Inspector pane.
+  - `token`: Streams the final text response.
+  - `error`: Transmits execution errors.
 - **Hybrid Search Scoring**: Blends 70% normalized vector cosine similarity with 30% Fuse.js fuzzy keyword matching (`/api/context`).
 - **Context Inspector Pane**: Displays real-time matching code chunks, similarity scores, file paths, total character and token metrics, and provides a one-click clipboard copy of the raw context payload.
 - **Markdown & Syntax Highlighting**: Renders responses using `react-markdown`, `remark-gfm`, and `react-syntax-highlighter` (`vscDarkPlus` theme).
@@ -90,22 +116,23 @@ Built with Next.js 16, React 19, and Tailwind CSS v4:
 | **Config Loader** | `dotenv` | `^17.4.2` |
 | **TypeScript** | TypeScript | `^6.0.3` |
 
-### Local AI & Embedding Models
-- **Inference Server**: [Ollama](https://ollama.com/) (running at `http://localhost:11434`)
-- **Default Embedding Model**: `unclemusclez/jina-embeddings-v2-base-code` (also supports `nomic-embed-text`)
-- **Default LLM**: `qwen2.5:3b` (selectable via UI from any locally pulled Ollama chat model)
+### Supported AI Models & Providers
+- **Local Inference Server**: [Ollama](https://ollama.com/) (running at `http://localhost:11434`)
+- **Default Embedding Model**: `unclemusclez/jina-embeddings-v2-base-code` (512-dim code embeddings, computed locally via Ollama; also supports `nomic-embed-text`)
+- **Default Local LLM**: `qwen2.5:3b` (lightweight, runs efficiently on consumer CPUs/laptops)
+- **Remote GPU LLM (Colab / Cloud)**: `Qwen 2.5 Coder 14B` (`qwen2.5-coder:14b`), recommended for high-accuracy coding tasks when hosted on a GPU
 - **Optional Cloud Model**: `gemini-2.0-flash` (via Google GenAI SDK for indexing summaries)
 
 ---
 
 ## Architecture Overview
 
-```
+```text
 Local-AI-Search-Engine/
 ├── .gitignore                    # Excludes node_modules, build artifacts, db files, env
 ├── .env.example                  # Template for environment configuration
-├── repo-index.json               # (Generated) AST metadata index
-├── repo-embeddings.json          # (Generated) Serialized vector database
+├── repo-index.json               # (Generated) AST metadata index (~13 MB)
+├── repo-embeddings.json          # (Generated) Serialized vector database (~95 MB)
 │
 ├── repo-indexer/                 # CLI Tools, AST Indexer & Agents
 │   ├── ScannerSkill.ts           # Recursive file scanner with SHA-256 hash detection
@@ -194,56 +221,114 @@ flowchart TD
 
 ---
 
-## Setup and Run Instructions
+## Setup & Configuration
 
 ### Prerequisites
 1. **Node.js**: v20.x or newer (npm included).
-2. **Ollama**: Installed and running locally.
-   - Start Ollama service:
-     ```bash
-     ollama serve
-     ```
-   - Pull the required embedding and language models:
-     ```bash
-     ollama pull unclemusclez/jina-embeddings-v2-base-code
-     ollama pull qwen2.5:3b
-     # Optional: For SemanticSearch.ts CLI REPL
-     ollama pull nomic-embed-text
-     ```
+2. **AI Provider**: Choose one or more of the following configurations:
 
-### Installation
+---
+
+### Mode 1: Fully Local Setup (Ollama)
+
+1. **Install and Start Ollama**:
+   Download and install from [ollama.com](https://ollama.com/).
+   ```bash
+   ollama serve
+   ```
+
+2. **Pull Required Local Models**:
+   ```bash
+   # Embedding model (512-dim code embeddings)
+   ollama pull unclemusclez/jina-embeddings-v2-base-code
+
+   # Lightweight local chat LLM
+   ollama pull qwen2.5:3b
+
+   # Optional: alternative embedding model for SemanticSearch REPL
+   ollama pull nomic-embed-text
+   ```
+
+---
+
+### Mode 2: Remote GPU Setup (Google Colab with Tunnel)
+
+Running larger code models (like `Qwen 2.5 Coder 14B`) requires dedicated GPU memory (12 GB+ VRAM). You can host the model on a Google Colab GPU runtime and connect it via a tunnel.
+
+<!-- TODO: Add a ready-to-run Colab setup notebook (e.g. colab_ollama_qwen14b.ipynb) to the repository to automate Colab deployment. -->
+
+1. **Colab Notebook Setup**:
+   Open a new notebook in [Google Colab](https://colab.research.google.com/) and set the runtime to **T4 GPU** or **A100 GPU** (`Runtime > Change runtime type > T4 GPU`).
+
+2. **Install Ollama & Pull the 14B Model in Colab**:
+   ```python
+   # Cell 1: Install Ollama
+   !curl -fsSL https://ollama.com/install.sh | sh
+
+   # Cell 2: Start Ollama in the background
+   import subprocess
+   subprocess.Popen(["ollama", "serve"])
+
+   # Cell 3: Pull Qwen 2.5 Coder 14B and the embedding model
+   !ollama pull qwen2.5-coder:14b
+   !ollama pull unclemusclez/jina-embeddings-v2-base-code
+   ```
+
+3. **Expose Port 11434 via Tunnel (e.g., ngrok or Cloudflared)**:
+   ```python
+   # Cell 4: Install pyngrok and open tunnel
+   !pip install pyngrok
+   from pyngrok import ngrok
+   # Set your auth token if required: ngrok.set_auth_token("YOUR_TOKEN")
+   tunnel = ngrok.connect(11434, "http")
+   print("Tunnel Public URL:", tunnel.public_url)
+   ```
+
+4. **Connect Local Client to Colab**:
+   - Forward the remote tunnel back to `localhost:11434` (e.g. via local proxy or SSH tunnel), or configure `OLLAMA_BASE_URL` in `.env.local` to point to the tunnel URL.
+   - When the web UI runs, select `qwen2.5-coder:14b` from the model dropdown.
+
+---
+
+### Optional Offline Indexing Tool: Gemini API Summarizer (Disabled by Default)
+
+> [!NOTE]
+> Gemini is **not a chat or RAG model** in this platform. It exists solely as an optional file summarization helper in `repo-indexer/SummarizerSkill.ts` during codebase indexing, and is currently commented out by default in `RepoIndexAgent.ts` (lines 56–63) to conserve API quota.
+
+1. Obtain an API key from [Google AI Studio](https://aistudio.google.com/).
+2. Add `GEMINI_API_KEY` to your `.env.local` file.
+3. If uncommented in `RepoIndexAgent.ts`, `SummarizerSkill.ts` will call `@google/genai` (`gemini-2.0-flash`) to generate architectural file summaries. If the key is omitted or the code remains commented out, summaries default to `"Summary Generation Disabled."` with zero network requests.
+
+---
+
+### Installation & Environment
 
 1. Clone or open the repository:
    ```bash
    cd Local-AI-Search-Engine
    ```
 
-2. Install dependencies for `repo-indexer`:
+2. Install dependencies:
    ```bash
-   cd repo-indexer
-   npm install
-   cd ..
+   # Indexer CLI tools
+   cd repo-indexer && npm install && cd ..
+
+   # Web application
+   cd rag-ops-ui && npm install && cd ..
    ```
 
-3. Install dependencies for `rag-ops-ui`:
+3. Configure environment variables:
    ```bash
-   cd rag-ops-ui
-   npm install
-   cd ..
+   cp .env.example .env.local
    ```
 
-### Environment Configuration
-Copy the `.env.example` file:
-```bash
-cp .env.example .env.local
-```
+#### Environment Variables Reference
 
-| Variable | Description | Default / Requirement |
-| :--- | :--- | :--- |
-| `WORKSPACE_ROOT` | Target repository root directory. Used by `rag-ops-ui` (`/api/agent`) to resolve file paths for the `read_entire_file` tool, and by `repo-indexer` CLI tools (`RepoIndexAgent`, `SearchAgent`). | Optional. Defaults to `process.cwd()` (or parent directory when running from `repo-indexer`). |
-| `GEMINI_API_KEY` | *(Optional)* Google Gemini API key for architectural summaries in `repo-indexer/SummarizerSkill.ts`. | Optional. If missing, summaries fallback to placeholder text. |
-
-<!-- TODO: In future updates, make Ollama URL configurable via an OLLAMA_BASE_URL environment variable rather than hardcoding http://localhost:11434. -->
+| Variable | Scope | Description | Default / Requirement |
+| :--- | :--- | :--- | :--- |
+| `WORKSPACE_ROOT` | Global | Path to the target repository to scan, index, and read. Used by `rag-ops-ui` (`/api/agent`) for `read_entire_file` and by `repo-indexer` CLI agents. | Optional. Defaults to `process.cwd()`. |
+| `OLLAMA_BASE_URL` | Global | Base URL for Ollama. Use `http://localhost:11434` for local mode, or set to your tunnel URL for remote Colab execution. | Defaults to `http://localhost:11434`. |
+| `GEMINI_API_KEY` | Indexer | *(Optional)* Google Gemini API key for architectural summaries in `repo-indexer/SummarizerSkill.ts`. | Optional. If missing, summaries use placeholder text. |
 
 ---
 
@@ -311,23 +396,38 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 | Endpoint | Method | Description | Request Body | Response |
 | :--- | :--- | :--- | :--- | :--- |
-| `/api/status` | `GET` | Health check against local Ollama (`http://localhost:11434/api/tags`). | None | `{ status: "online" \| "offline", models: Array<{ name: string }> }` |
+| `/api/status` | `GET` | Health check against Ollama (`/api/tags`). | None | `{ status: "online" \| "offline", models: Array<{ name: string }> }` |
 | `/api/context` | `POST` | Hybrid vector + Fuse.js search over `repo-embeddings.json`. | `{ query: string, topN?: number, embeddingModel?: string }` | `{ matches: Match[], rawContext: string, metrics: { charCount: number, estimatedTokens: number } }` |
 | `/api/generate` | `POST` | Streams response from Ollama `/api/generate` using supplied context package. | `{ query: string, rawContext: string, llmModel?: string }` | Server-Sent Event (SSE) text stream from Ollama. |
 | `/api/agent` | `POST` | Autonomous agent loop (max 8 iterations) with tool-calling capabilities. | `{ query: string, history?: Message[], llmModel?: string, embeddingModel?: string, topN?: number }` | Server-Sent Event (SSE) stream with event types: `status`, `context`, `token`, `error`. |
 
-### Agent Mode Available Tools (`/api/agent`)
-When in Agent Mode, the LLM has access to:
-1. `search_codebase`: Runs hybrid search (semantic vector + Fuse.js keyword) against the indexed repository and returns relevant code chunks.
-2. `read_entire_file`: Reads the complete source code of a file by its path when a chunk provides insufficient context.
+---
+
+## Known Limitations & Architectural Trade-offs
+
+1. **Google Colab Session Timeouts & Tunnel Volatility**:
+   - Free Google Colab GPU sessions automatically disconnect after periods of inactivity (typically 30–90 minutes) or reach a hard session cutoff (12 hours).
+   - Tunnel endpoints (e.g., ngrok or cloudflared) regenerate new public URLs each time the Colab notebook restarts, requiring manual reconfiguration in the local client.
+2. **Privacy Trade-offs in Remote Modes**:
+   - Running inference via Google Colab or summarization via the Gemini API transmits code context (user prompts, retrieved snippets, or file source code) over the public internet to third-party infrastructure. Only Local Ollama mode guarantees 100% offline privacy.
+3. **Hardware Requirements for 14B Models**:
+   - Larger coding models such as `Qwen 2.5 Coder 14B` require a dedicated GPU with at least 12–16 GB of VRAM. Attempting to run 14B models locally on consumer CPU hardware results in severe inference latency.
+4. **Hardcoded Endpoints in Codebase**:
+   - Several CLI scripts (`EmbedAgent.ts`, `SemanticSearch.ts`, `RagAgent.ts`) and API routes currently hardcode `http://localhost:11434` rather than reading dynamically from `process.env.OLLAMA_BASE_URL`. Using a remote tunnel requires local port forwarding or codebase patching.
+5. **Monolithic JSON Vector Database**:
+   - Both `repo-index.json` (~13 MB) and `repo-embeddings.json` (~95 MB) are flat JSON files loaded entirely into Node.js memory. While acceptable for mid-size repositories (~1,000 files), massive enterprise codebases with tens of thousands of files would require an embedded vector database (e.g., SQLite with sqlite-vss, DuckDB, LanceDB, or Chroma).
+6. **AST Language Scope**:
+   - AST parsing via `ts-morph` is restricted to TypeScript and JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`). Other languages in polyglot repositories (Python, Go, Rust, shell scripts, styles) are skipped during symbol extraction.
+7. **Disabled Summarization in Indexer Loop**:
+   - In `repo-indexer/RepoIndexAgent.ts` (lines 56–63), AI summarization via `SummarizerSkill` is commented out by default (`// Summarizer temporarily disabled to save API quota`) and defaults to `"Summary Generation Disabled."`.
+8. **Heuristic Token Counting**:
+   - Token metrics in the Context Inspector use a character-length estimation (`charCount / 4`) rather than exact BPE tokenization.
 
 ---
 
-## Screenshots / Live Demo Placeholder
+## Screenshots / UI Layout
 
-<!-- TODO: Add actual UI screenshots once captured from the running application -->
-
-```
+```text
 +----------------------------------------------------------------------------------------------------+
 |  [Bot] RepoMind               LLM: [qwen2.5:3b v]  [x] Agent Mode   [ ] Context Only               |
 +-----------------------------------------------------------------+----------------------------------+
@@ -353,18 +453,10 @@ When in Agent Mode, the LLM has access to:
 
 ---
 
-## Limitations and Future Work
+## Future Work
 
-Based strictly on the current codebase:
-1. **Hardcoded Ollama Connection URLs**:
-   Across both `repo-indexer` (`EmbedAgent.ts`, `SemanticSearch.ts`, `ContextBuilderSkill.ts`, `RagAgent.ts`) and `rag-ops-ui` (`status/route.ts`, `context/route.ts`, `generate/route.ts`, `agent/route.ts`), the Ollama endpoint is hardcoded to `http://localhost:11434`.
-   <!-- TODO: Introduce an OLLAMA_BASE_URL environment variable to allow hosting Ollama on a remote machine or non-standard port. -->
-2. **Disabled Summarization in Indexer Loop**:
-   In `repo-indexer/RepoIndexAgent.ts` (lines 56–63), AI summarization via `SummarizerSkill` is commented out (`// Summarizer temporarily disabled to save API quota`) and defaults to `"Summary Generation Disabled."`.
-3. **Model Inconsistency in CLI REPL**:
-   `repo-indexer/SemanticSearch.ts` uses `nomic-embed-text`, whereas `EmbedAgent.ts`, `ContextBuilderSkill.ts`, and `rag-ops-ui` use `unclemusclez/jina-embeddings-v2-base-code`.
-   <!-- TODO: Standardize embedding model references across SemanticSearch.ts and EmbedAgent.ts. -->
-4. **Heuristic Token Counting**:
-   Token metrics use a simple character-length division (`charCount / 4`) rather than exact BPE tokenization (e.g., using `tiktoken` or model-specific tokenizers).
-5. **Flat-File JSON Vector Database**:
-   Both `repo-index.json` and `repo-embeddings.json` are stored as monolithic JSON files on disk and loaded entirely into memory. For large enterprise codebases, integrating an embedded vector store (e.g., SQLite with sqlite-vss, DuckDB, LanceDB, or Chroma) would optimize memory usage and persistence.
+- [ ] **Colab Automation Notebook**: Add a ready-to-run `.ipynb` notebook to the repository automating Ollama installation, model pulling, and tunnel creation on Google Colab.
+- [ ] **Dynamic OLLAMA_BASE_URL Refactoring**: Refactor all indexer scripts and Next.js API routes to read `process.env.OLLAMA_BASE_URL` with a fallback to `http://localhost:11434`.
+- [ ] **Embedded Vector Database**: Migrate flat `repo-embeddings.json` storage to LanceDB or SQLite-VSS for on-disk indexed vector queries and reduced memory consumption.
+- [ ] **Tokenizer Integration**: Integrate an exact BPE tokenizer (e.g. `tiktoken` or `@dqbd/tiktoken`) to replace heuristic `charCount / 4` estimation.
+- [ ] **Multi-Language AST Support**: Extend AST extraction beyond TypeScript/JavaScript using tree-sitter bindings for Python, Go, and Rust.
