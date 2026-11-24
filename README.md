@@ -8,17 +8,19 @@ Developers can perform hybrid code search (combining vector similarity with Fuse
 
 ## Execution Modes, Privacy & Data Flow
 
-Chat, RAG queries, and autonomous agent workflows are powered exclusively via Ollama (either locally or through a Colab tunnel). **Gemini is not a chat provider in this platform**; it is solely used by an optional offline file summarizer during codebase indexing (which is disabled by default in the code).
+Chat, RAG queries, and autonomous agent workflows are powered **exclusively by Ollama**. The application hardcodes all chat and embedding requests to `http://localhost:11434`. **Gemini is not a chat provider** in this platform; it is used solely by an optional offline file summarizer during codebase indexing (which is disabled by default in the code).
+
+There are two ways to run Ollama for chat, plus an optional offline indexing tool:
 
 | Mode / Feature | Scope | What Stays on Machine | What Is Sent Off Machine | Privacy Level | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Local Ollama Mode (Chat & Embeddings)** | Chat & RAG | Entire source codebase, AST index (`repo-index.json`), vector database (`repo-embeddings.json`), embeddings computation, prompts, and completions | **Nothing** (0 bytes sent outside local machine) | **100% Private (Local-Only)** | All embeddings (`/api/embeddings`) and chat inferences (`/api/generate`, `/api/chat`) execute against a local Ollama instance (`http://localhost:11434`). No external network requests are made. |
-| **Colab-Hosted Model (via Tunnel)** | Chat & RAG | Source repository files, AST index, vector embeddings database | User prompt, retrieved code chunks (or full files read by agent tools), and model responses | **Shared with Cloud Host (Google Colab & Tunnel Provider)** | Chat and agent inference run on a remote Google Colab GPU instance over a public tunnel (e.g., ngrok or cloudflared). Code chunks in the active context window travel across third-party infrastructure. |
+| **Local Ollama (Chat & Embeddings)** | Chat & RAG | Entire source codebase, AST index (`repo-index.json`), vector database (`repo-embeddings.json`), embeddings computation, prompts, and completions | **Nothing** (0 bytes sent outside local machine) | **100% Private (Local-Only)** | All embeddings (`/api/embeddings`) and chat inferences (`/api/generate`, `/api/chat`) execute against `http://localhost:11434`. No external network requests are made. |
+| **Colab-Hosted Ollama (via Tunnel & Port Forwarding)** | Chat & RAG | Source repository files, AST index, vector embeddings database | User prompt, retrieved code chunks (or full files read by agent tools), and model responses | **Shared with Cloud Host (Google Colab & Tunnel Provider)** | Inference runs on a remote Colab GPU instance. The tunnel must be forwarded back to local port 11434 so the application reaches it unchanged. Code chunks in the active context window travel across third-party infrastructure. |
 | **Gemini API (Offline Indexing Only)** | Indexer Only *(Not Chat)* | Base AST index structure, vector embeddings | Source code file content sent for architectural summarization | **Cloud API (Google)** | **Not a chat mode.** Only used during `RepoIndexAgent` execution if `GEMINI_API_KEY` is provided and the summarizer is manually re-enabled (it is commented out by default in `RepoIndexAgent.ts` to conserve API quota). |
 
 > [!IMPORTANT]
-> - **Chat is Ollama-Only**: Chat responses and agent reasoning cannot be routed to the Gemini API. Chat inference is handled exclusively by Ollama (local or remote Colab tunnel).
-> - **Local Ollama Mode** guarantees zero remote code exposure: embedding generation and model inference remain strictly contained on `localhost`.
+> - **Chat Supports Ollama Only**: Chat responses and agent reasoning cannot be routed to Gemini or other cloud providers. The codebase contains no provider abstraction for hosted chat APIs.
+> - **Local Ollama** keeps all data on the machine: embedding generation and model inference remain strictly contained on `localhost`.
 > - **Colab Mode** sends code context over the internet: retrieved code chunks, prompts, or source files are processed by the remote Colab runtime and tunnel provider. Do not use remote modes if working with proprietary code under strict air-gapped security policies.
 
 ---
@@ -117,11 +119,11 @@ Built with Next.js 16, React 19, and Tailwind CSS v4:
 | **TypeScript** | TypeScript | `^6.0.3` |
 
 ### Supported AI Models & Providers
-- **Local Inference Server**: [Ollama](https://ollama.com/) (running at `http://localhost:11434`)
+- **Inference Engine**: [Ollama](https://ollama.com/) (hardcoded to `http://localhost:11434`)
 - **Default Embedding Model**: `unclemusclez/jina-embeddings-v2-base-code` (512-dim code embeddings, computed locally via Ollama; also supports `nomic-embed-text`)
 - **Default Local LLM**: `qwen2.5:3b` (lightweight, runs efficiently on consumer CPUs/laptops)
 - **Remote GPU LLM (Colab / Cloud)**: `Qwen 2.5 Coder 14B` (`qwen2.5-coder:14b`), recommended for high-accuracy coding tasks when hosted on a GPU
-- **Optional Cloud Model**: `gemini-2.0-flash` (via Google GenAI SDK for indexing summaries)
+- **Optional Indexer Summarizer**: `gemini-2.0-flash` (via Google GenAI SDK for offline indexing summaries only; disabled by default)
 
 ---
 
@@ -225,11 +227,11 @@ flowchart TD
 
 ### Prerequisites
 1. **Node.js**: v20.x or newer (npm included).
-2. **AI Provider**: Choose one or more of the following configurations:
+2. **Ollama**: Installed and running (either locally or on a remote machine).
 
 ---
 
-### Mode 1: Fully Local Setup (Ollama)
+### Setup 1: Local Ollama Execution
 
 1. **Install and Start Ollama**:
    Download and install from [ollama.com](https://ollama.com/).
@@ -251,9 +253,12 @@ flowchart TD
 
 ---
 
-### Mode 2: Remote GPU Setup (Google Colab with Tunnel)
+### Setup 2: Remote GPU Execution (Google Colab with Tunnel & Port Forwarding)
 
-Running larger code models (like `Qwen 2.5 Coder 14B`) requires dedicated GPU memory (12 GB+ VRAM). You can host the model on a Google Colab GPU runtime and connect it via a tunnel.
+Running larger code models (like `Qwen 2.5 Coder 14B`) requires dedicated GPU memory (12 GB+ VRAM). You can host Ollama on a Google Colab GPU runtime and forward it back to `http://localhost:11434` on your local machine.
+
+> [!NOTE]
+> This is a **manual external networking setup**, not an in-app switch or configuration setting. The application code hardcodes `http://localhost:11434`, so the remote tunnel must be forwarded back to local port 11434 for the application to reach it without code changes.
 
 <!-- TODO: Add a ready-to-run Colab setup notebook (e.g. colab_ollama_qwen14b.ipynb) to the repository to automate Colab deployment. -->
 
@@ -284,13 +289,13 @@ Running larger code models (like `Qwen 2.5 Coder 14B`) requires dedicated GPU me
    print("Tunnel Public URL:", tunnel.public_url)
    ```
 
-4. **Connect Local Client to Colab**:
-   - Forward the remote tunnel back to `localhost:11434` (e.g. via local proxy or SSH tunnel), or configure `OLLAMA_BASE_URL` in `.env.local` to point to the tunnel URL.
-   - When the web UI runs, select `qwen2.5-coder:14b` from the model dropdown.
+4. **Forward the Remote Tunnel to `http://localhost:11434` Locally**:
+   - Forward the public tunnel URL back to `localhost:11434` on your local machine (for example, using a local reverse proxy or SSH/TCP port forwarding), so that requests to `http://localhost:11434` are routed through the tunnel to the Colab GPU.
+   - When `rag-ops-ui` runs, it will connect to `http://localhost:11434` unchanged and display `qwen2.5-coder:14b` in the model dropdown.
 
 ---
 
-### Optional Offline Indexing Tool: Gemini API Summarizer (Disabled by Default)
+### Setup 3: Optional Offline Indexing Tool (Gemini API Summarizer)
 
 > [!NOTE]
 > Gemini is **not a chat or RAG model** in this platform. It exists solely as an optional file summarization helper in `repo-indexer/SummarizerSkill.ts` during codebase indexing, and is currently commented out by default in `RepoIndexAgent.ts` (lines 56–63) to conserve API quota.
@@ -326,9 +331,8 @@ Running larger code models (like `Qwen 2.5 Coder 14B`) requires dedicated GPU me
 
 | Variable | Scope | Description | Default / Requirement |
 | :--- | :--- | :--- | :--- |
-| `WORKSPACE_ROOT` | Global | Path to the target repository to scan, index, and read. Used by `rag-ops-ui` (`/api/agent`) for `read_entire_file` and by `repo-indexer` CLI agents. | Optional. Defaults to `process.cwd()`. |
-| `OLLAMA_BASE_URL` | Global | Base URL for Ollama. Use `http://localhost:11434` for local mode, or set to your tunnel URL for remote Colab execution. | Defaults to `http://localhost:11434`. |
-| `GEMINI_API_KEY` | Indexer | *(Optional)* Google Gemini API key for architectural summaries in `repo-indexer/SummarizerSkill.ts`. | Optional. If missing, summaries use placeholder text. |
+| `WORKSPACE_ROOT` | Global | Path to the target repository to scan, index, and read. Used by `rag-ops-ui` (`/api/agent`) for `read_entire_file` (with path-traversal guards) and by `repo-indexer` CLI agents. | Optional. Defaults to `process.cwd()`. |
+| `GEMINI_API_KEY` | Indexer | *(Optional)* Google Gemini API key required strictly for architectural summaries in `repo-indexer/SummarizerSkill.ts`. Not used for chat. | Optional. If missing, summaries use placeholder text. |
 
 ---
 
@@ -405,22 +409,26 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Known Limitations & Architectural Trade-offs
 
-1. **Google Colab Session Timeouts & Tunnel Volatility**:
+1. **No Provider Abstraction Layer**:
+   - There is no unified provider interface or abstraction layer in the codebase. The application directly calls Ollama REST endpoints (`/api/chat`, `/api/generate`, `/api/embeddings`, `/api/tags`).
+   - Using hosted APIs (such as OpenAI, Anthropic, Gemini, or Groq) for chat or agent workflows cannot be done through configuration and would require manual code modifications in `generate/route.ts`, `agent/route.ts`, `status/route.ts`, and the model dropdown in `page.tsx`.
+2. **Hardcoded Ollama Base URL**:
+   - The Ollama endpoint is hardcoded to `http://localhost:11434` across all API routes (`generate/route.ts`, `agent/route.ts`, `context/route.ts`, `status/route.ts`) and indexer CLI scripts (`EmbedAgent.ts`, `SemanticSearch.ts`, `ContextBuilderSkill.ts`, `RagAgent.ts`).
+   - The backend cannot be pointed to a remote host or tunnel URL via configuration; connecting to a remote Colab instance requires forwarding the tunnel back to `localhost:11434` locally.
+3. **AST Indexing Limited to TypeScript and JavaScript**:
+   - AST extraction via `ts-morph` is limited strictly to `.ts`, `.tsx`, `.js`, and `.jsx` files. Other languages in polyglot codebases (e.g., Python, Go, Rust, Java, CSS, HTML) are skipped by the AST symbol extractor.
+4. **Google Colab Session Timeouts & Tunnel Volatility**:
    - Free Google Colab GPU sessions automatically disconnect after periods of inactivity (typically 30–90 minutes) or reach a hard session cutoff (12 hours).
-   - Tunnel endpoints (e.g., ngrok or cloudflared) regenerate new public URLs each time the Colab notebook restarts, requiring manual reconfiguration in the local client.
-2. **Privacy Trade-offs in Remote Modes**:
-   - Running inference via Google Colab or summarization via the Gemini API transmits code context (user prompts, retrieved snippets, or file source code) over the public internet to third-party infrastructure. Only Local Ollama mode guarantees 100% offline privacy.
-3. **Hardware Requirements for 14B Models**:
+   - Tunnel endpoints (e.g., ngrok or cloudflared) regenerate new public URLs each time the Colab notebook restarts, requiring manual reconfiguration of local port forwarding.
+5. **Privacy Trade-offs in Remote Modes**:
+   - Running inference via Google Colab or summarization via the Gemini API transmits code context (user prompts, retrieved snippets, or file source code) over the public internet to third-party infrastructure. Only Local Ollama mode guarantees local-only privacy.
+6. **Hardware Requirements for 14B Models**:
    - Larger coding models such as `Qwen 2.5 Coder 14B` require a dedicated GPU with at least 12–16 GB of VRAM. Attempting to run 14B models locally on consumer CPU hardware results in severe inference latency.
-4. **Hardcoded Endpoints in Codebase**:
-   - Several CLI scripts (`EmbedAgent.ts`, `SemanticSearch.ts`, `RagAgent.ts`) and API routes currently hardcode `http://localhost:11434` rather than reading dynamically from `process.env.OLLAMA_BASE_URL`. Using a remote tunnel requires local port forwarding or codebase patching.
-5. **Monolithic JSON Vector Database**:
+7. **Monolithic JSON Vector Database**:
    - Both `repo-index.json` (~13 MB) and `repo-embeddings.json` (~95 MB) are flat JSON files loaded entirely into Node.js memory. While acceptable for mid-size repositories (~1,000 files), massive enterprise codebases with tens of thousands of files would require an embedded vector database (e.g., SQLite with sqlite-vss, DuckDB, LanceDB, or Chroma).
-6. **AST Language Scope**:
-   - AST parsing via `ts-morph` is restricted to TypeScript and JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`). Other languages in polyglot repositories (Python, Go, Rust, shell scripts, styles) are skipped during symbol extraction.
-7. **Disabled Summarization in Indexer Loop**:
+8. **Disabled Summarization in Indexer Loop**:
    - In `repo-indexer/RepoIndexAgent.ts` (lines 56–63), AI summarization via `SummarizerSkill` is commented out by default (`// Summarizer temporarily disabled to save API quota`) and defaults to `"Summary Generation Disabled."`.
-8. **Heuristic Token Counting**:
+9. **Heuristic Token Counting**:
    - Token metrics in the Context Inspector use a character-length estimation (`charCount / 4`) rather than exact BPE tokenization.
 
 ---
@@ -455,8 +463,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Future Work
 
+- [ ] **Provider Abstraction Layer**: Introduce a unified provider interface so users can route chat and agent queries to hosted APIs (OpenAI, Anthropic, Gemini, Groq) via configuration without code edits.
+- [ ] **Configurable Ollama URL**: Refactor all indexer scripts and Next.js API routes to read a configurable base URL environment variable rather than hardcoding `http://localhost:11434`.
 - [ ] **Colab Automation Notebook**: Add a ready-to-run `.ipynb` notebook to the repository automating Ollama installation, model pulling, and tunnel creation on Google Colab.
-- [ ] **Dynamic OLLAMA_BASE_URL Refactoring**: Refactor all indexer scripts and Next.js API routes to read `process.env.OLLAMA_BASE_URL` with a fallback to `http://localhost:11434`.
 - [ ] **Embedded Vector Database**: Migrate flat `repo-embeddings.json` storage to LanceDB or SQLite-VSS for on-disk indexed vector queries and reduced memory consumption.
 - [ ] **Tokenizer Integration**: Integrate an exact BPE tokenizer (e.g. `tiktoken` or `@dqbd/tiktoken`) to replace heuristic `charCount / 4` estimation.
 - [ ] **Multi-Language AST Support**: Extend AST extraction beyond TypeScript/JavaScript using tree-sitter bindings for Python, Go, and Rust.
